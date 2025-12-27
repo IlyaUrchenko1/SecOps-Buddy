@@ -1,0 +1,11 @@
+[Unit]
+Description=SecOps Buddy Agent
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -m secops_buddy.agent --config /etc/secops-buddy/config.yml
+User=root
+
+[Install]
+WantedBy=multi-user.target

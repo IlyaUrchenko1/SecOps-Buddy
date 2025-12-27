@@ -1,0 +1,25 @@
+bot_token: "PUT_YOUR_TELEGRAM_BOT_TOKEN_HERE"
+
+allowed_users:
+  - 123456789
+
+scan_interval_hours: 24
+
+notifications:
+  send_critical: true
+  send_warning: true
+  send_daily_digest: true
+
+paths:
+  state_dir: "/var/lib/secops-buddy"
+  log_file: "/var/log/secops-buddy.log"
+
+checks:
+  ssh: true
+  ports: true
+  firewall: true
+  users: true
+  logs: true
+  updates: true
+  fail2ban: false
+  lynis: false
