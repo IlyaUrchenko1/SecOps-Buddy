@@ -21,6 +21,7 @@ def _pid_paths(root: Path) -> tuple[Path, Path, Path, Path]:
         logs_dir / "run.log",
         logs_dir / "bot.log",
         logs_dir / "agent.log",
+        logs_dir / "restart.flag",
     )
 
 
@@ -124,9 +125,14 @@ async def _run(config_path: str, once: bool, no_agent: bool) -> None:
     interval_s = max(2, interval_s)
 
     stop = asyncio.Event()
+    restart = asyncio.Event()
     loop = asyncio.get_running_loop()
 
     def request_stop() -> None:
+        stop.set()
+
+    def request_restart() -> None:
+        restart.set()
         stop.set()
 
     for sig in (getattr(signal, "SIGINT", None), getattr(signal, "SIGTERM", None)):
@@ -136,11 +142,38 @@ async def _run(config_path: str, once: bool, no_agent: bool) -> None:
             loop.add_signal_handler(sig, request_stop)
         except Exception:
             pass
+    for sig in (getattr(signal, "SIGHUP", None), getattr(signal, "SIGUSR1", None)):
+        if sig is None:
+            continue
+        try:
+            loop.add_signal_handler(sig, request_restart)
+        except Exception:
+            pass
+
+    async def watch_restart_flag(path: Path) -> None:
+        last = 0.0
+        try:
+            last = path.stat().st_mtime
+        except Exception:
+            last = 0.0
+        while not stop.is_set():
+            await asyncio.sleep(0.5)
+            try:
+                cur = path.stat().st_mtime
+            except Exception:
+                cur = 0.0
+            if cur and cur != last:
+                request_restart()
+                return
 
     tasks: list[asyncio.Task] = []
     if not no_agent:
         tasks.append(asyncio.create_task(_agent_loop_with_stop(stop, config_path, interval_s)))
     tasks.append(asyncio.create_task(run_bot(config_path)))
+    restart_flag = Path(os.getenv("SECOPS_BUDDY_RESTART_FLAG", "")).expanduser()
+    if not restart_flag.name:
+        restart_flag = (root / "var" / "secops-buddy" / "restart.flag").resolve()
+    tasks.append(asyncio.create_task(watch_restart_flag(restart_flag)))
 
     log.info("run_start root=%s config=%s monitor_interval_s=%d", root, config_path, interval_s)
     try:
@@ -152,6 +185,12 @@ async def _run(config_path: str, once: bool, no_agent: bool) -> None:
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        if restart.is_set():
+            args = [sys.executable, str(Path(__file__).resolve()), "--config", str(cfg_path)]
+            if no_agent:
+                args.append("--no-agent")
+            args.append("--foreground")
+            os.execv(sys.executable, args)
 
 
 parser = argparse.ArgumentParser(prog="run")
@@ -165,7 +204,8 @@ cfg_path = Path(args.config).expanduser().resolve()
 root = find_root(cfg_path)
 init_env(cfg_path)
 
-pid_path, run_log, bot_log, agent_log = _pid_paths(root)
+pid_path, run_log, bot_log, agent_log, restart_flag = _pid_paths(root)
+os.environ["SECOPS_BUDDY_RESTART_FLAG"] = str(restart_flag)
 
 token = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
 bot_username = _tg_get_username(token)
