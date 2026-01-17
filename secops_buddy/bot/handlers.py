@@ -14,6 +14,8 @@ from .keyboards import main_menu_kb
 class BotContext:
     allowed_users: set[int]
     state_dir: Path
+    root: Path
+    config_path: Path
 
 
 def _is_allowed(message: Message, allowed: set[int]) -> bool:
@@ -30,28 +32,26 @@ def _help_text() -> str:
         [
             "<b>Команды</b>",
             "",
-            "<b>/status</b> — краткий статус (последний snapshot)",
+            "<b>/status</b> — статус бота и сервера",
             "<b>/diff</b> — изменения относительно прошлого snapshot",
-            "<b>/report</b> — статус + diff одним сообщением",
+            "<b>/report</b> — server snapshot + diff",
         ]
     )
 
 
-def _start_text(snapshot_text: str) -> str:
+def _start_text() -> str:
     return "\n".join(
         [
             "<b>SecOps Buddy</b>",
             "",
             "Я показываю результаты последнего сканирования сервера.",
             "",
-            snapshot_text,
-            "",
             _help_text(),
         ]
     )
 
 
-def build_router(ctx: BotContext, read_snapshot_text, read_diff_text, read_report_text) -> Router:
+def build_router(ctx: BotContext, read_status_text, read_diff_text, read_report_text) -> Router:
     router = Router()
 
     @router.message(Command("start"))
@@ -59,7 +59,7 @@ def build_router(ctx: BotContext, read_snapshot_text, read_diff_text, read_repor
         if not _is_allowed(message, ctx.allowed_users):
             await message.answer(_access_denied_text())
             return
-        await message.answer(_start_text(read_snapshot_text()), reply_markup=main_menu_kb())
+        await message.answer(_start_text(), reply_markup=main_menu_kb())
 
     @router.message(Command("help"))
     async def cmd_help(message: Message) -> None:
@@ -73,7 +73,7 @@ def build_router(ctx: BotContext, read_snapshot_text, read_diff_text, read_repor
         if not _is_allowed(message, ctx.allowed_users):
             await message.answer(_access_denied_text())
             return
-        await message.answer(read_snapshot_text(), reply_markup=main_menu_kb())
+        await message.answer(read_status_text(), reply_markup=main_menu_kb())
 
     @router.message(Command("diff"))
     async def cmd_diff(message: Message) -> None:
