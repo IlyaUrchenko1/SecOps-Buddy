@@ -5,34 +5,48 @@ APP_NAME="secops-buddy"
 
 echo "[*] Installing ${APP_NAME}..."
 
-if [[ $EUID -ne 0 ]]; then
-  echo "[-] Please run as root (sudo ./install.sh)"
-  exit 1
-fi
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${PROJECT_DIR}"
 
 if command -v apt-get >/dev/null 2>&1; then
-  apt-get update -y
-  apt-get install -y python3 python3-pip iproute2 curl
+  if [[ ${EUID:-99999} -eq 0 ]]; then
+    apt-get update -y
+    apt-get install -y python3 python3-venv python3-pip iproute2 curl
+  else
+    echo "[*] apt-get available but not running as root; skipping system packages"
+  fi
 fi
 
-mkdir -p /etc/secops-buddy
-mkdir -p /var/lib/secops-buddy/snapshots
-mkdir -p /var/lib/secops-buddy/diffs
-touch /var/log/secops-buddy.log
+python3 -m venv .venv
+.venv/bin/pip install -U pip setuptools wheel
+.venv/bin/pip install -r requirements.txt
 
-if [[ ! -f /etc/secops-buddy/config.yml ]]; then
-  cp ./config/config.example.yml /etc/secops-buddy/config.yml
-  echo "[*] Created /etc/secops-buddy/config.yml (edit allowed_users)"
+mkdir -p var/secops-buddy/snapshots
+mkdir -p var/secops-buddy/diffs
+
+if [[ ! -f ".env" ]]; then
+  if [[ -f ".env.example" ]]; then
+    cp .env.example .env
+  else
+    printf "TELEGRAM_BOT_TOKEN=\nTELEGRAM_ALLOWED_USERS=\n" > .env
+  fi
+  chmod 600 .env || true
+  echo "[*] Created .env"
 fi
 
-cp ./systemd/secops-buddy.service /etc/systemd/system/secops-buddy.service
-cp ./systemd/secops-buddy.timer /etc/systemd/system/secops-buddy.timer
+if [[ ! -f "config/config.yml" ]]; then
+  mkdir -p config
+  if [[ -f "config/config.example.yml" ]]; then
+    cp config/config.example.yml config/config.yml
+  else
+    printf "monitor_interval_seconds: 10\nnotifications:\n  enabled: true\npaths:\n  state_dir: \"./var/secops-buddy\"\n  log_file: \"./var/secops-buddy/agent.log\"\nchecks:\n  ssh: true\n  ports: true\n  firewall: false\n  users: false\n  logs: false\n  updates: false\n" > config/config.yml
+  fi
+  echo "[*] Created config/config.yml"
+fi
 
-systemctl daemon-reload
-systemctl enable --now secops-buddy.timer
-
-echo "[+] Done. Next steps:"
-echo "    1) edit /etc/secops-buddy/config.yml"
-echo "    2) create /etc/secops-buddy/.env with TELEGRAM_BOT_TOKEN"
-echo "    3) run: systemctl start secops-buddy.service"
-echo "    4) check logs: tail -n 200 /var/log/secops-buddy.log"
+echo "[+] Ready"
+echo "[*] Fill files:"
+echo "    .env"
+echo "    config/config.yml"
+echo "[*] Start:"
+echo "    .venv/bin/python run.py"

@@ -1,5 +1,5 @@
 [Unit]
-Description=Run SecOps Buddy Agent periodically
+Description=SecOps Buddy timer (deprecated)
 
 [Timer]
 OnCalendar=*-*-* *:00:00

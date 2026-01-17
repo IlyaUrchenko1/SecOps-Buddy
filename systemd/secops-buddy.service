@@ -1,11 +1,18 @@
 [Unit]
-Description=SecOps Buddy Agent
+Description=SecOps Buddy (agent + bot)
 After=network.target
 
 [Service]
-Type=oneshot
-ExecStart=/usr/bin/python3 -m secops_buddy.agent --config /etc/secops-buddy/config.yml
+Type=simple
+WorkingDirectory=/opt/secops-buddy
+Environment=SECOPS_BUDDY_ROOT=/opt/secops-buddy
+EnvironmentFile=/etc/secops-buddy/.env
+ExecStart=/opt/secops-buddy/.venv/bin/python /opt/secops-buddy/run.py --config /etc/secops-buddy/config.yml
 User=root
+Restart=always
+RestartSec=2
+KillSignal=SIGTERM
+TimeoutStopSec=25
 
 [Install]
 WantedBy=multi-user.target

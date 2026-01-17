@@ -1,58 +1,101 @@
 import argparse
 import asyncio
+import json
 import logging
 import os
 import signal
+import subprocess
+import sys
 from pathlib import Path
-
-import yaml
-from dotenv import load_dotenv
 
 from secops_buddy.agent import run as run_agent
 from secops_buddy.bot.app import run_bot
+from secops_buddy.utils import find_root, init_env, load_config
 
 
-def _find_root() -> Path:
-    env_root = os.getenv("SECOPS_BUDDY_ROOT")
-    if env_root:
-        p = Path(env_root).expanduser()
-        if p.exists():
-            return p.resolve()
-
-    seeds = [Path.cwd(), Path(__file__).resolve(), Path(__file__).resolve().parent]
-    seen: set[Path] = set()
-    for seed in seeds:
-        base = seed if seed.is_dir() else seed.parent
-        for cand in [base, *base.parents]:
-            if cand in seen:
-                continue
-            seen.add(cand)
-            if (cand / ".env").is_file() and (cand / "config" / "config.yml").is_file():
-                return cand
-            if (cand / "config" / "config.yml").is_file():
-                return cand
-            if (cand / ".env").is_file():
-                return cand
-    return Path.cwd().resolve()
+def _pid_paths(root: Path) -> tuple[Path, Path, Path, Path]:
+    logs_dir = root / "var" / "secops-buddy"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    return (
+        logs_dir / "secops-buddy.pid",
+        logs_dir / "run.log",
+        logs_dir / "bot.log",
+        logs_dir / "agent.log",
+    )
 
 
-def _load_config(path: Path) -> dict:
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise ValueError("config_invalid")
-    return data
+def _tg_get_username(token: str) -> str | None:
+    import urllib.request
+
+    if not token:
+        return None
+    url = f"https://api.telegram.org/bot{token}/getMe"
+    req = urllib.request.Request(url, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = r.read().decode("utf-8", "ignore")
+    except Exception:
+        return None
+    try:
+        obj = json.loads(data)
+    except Exception:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    res = obj.get("result")
+    if not isinstance(res, dict):
+        return None
+    username = res.get("username")
+    return str(username) if isinstance(username, str) and username else None
+
+
+class _NamePrefixFilter(logging.Filter):
+    def __init__(self, prefixes: tuple[str, ...]):
+        super().__init__()
+        self.prefixes = prefixes
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.name.startswith(self.prefixes)
+
+
+def _configure_logging(root: Path, bot_log: Path, agent_log: Path, run_log: Path) -> None:
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    for h in list(root_logger.handlers):
+        root_logger.removeHandler(h)
+
+    h_run = logging.FileHandler(run_log, encoding="utf-8")
+    h_run.setFormatter(fmt)
+    h_run.addFilter(_NamePrefixFilter(("secops_buddy.run",)))
+    root_logger.addHandler(h_run)
+
+    h_bot = logging.FileHandler(bot_log, encoding="utf-8")
+    h_bot.setFormatter(fmt)
+    h_bot.addFilter(_NamePrefixFilter(("secops_buddy.bot", "aiogram")))
+    root_logger.addHandler(h_bot)
+
+    h_agent = logging.FileHandler(agent_log, encoding="utf-8")
+    h_agent.setFormatter(fmt)
+    h_agent.addFilter(_NamePrefixFilter(("secops_buddy.agent",)))
+    root_logger.addHandler(h_agent)
+
+    os.environ["SECOPS_BUDDY_AGENT_LOG"] = str(agent_log)
+
+    logging.getLogger("secops_buddy.run").info("logging_ready root=%s", root)
 
 
  
 
 
 async def _agent_loop_with_stop(stop: asyncio.Event, config_path: str, interval_s: int) -> None:
+    log = logging.getLogger("secops_buddy.run")
     while not stop.is_set():
         try:
             os.environ["SECOPS_BUDDY_ARCHIVE"] = "0"
             await asyncio.to_thread(run_agent, config_path)
         except Exception as e:
-            logging.error("agent_error %s", e)
+            log.error("agent_error %s", e)
         try:
             await asyncio.wait_for(stop.wait(), timeout=interval_s)
         except TimeoutError:
@@ -60,17 +103,19 @@ async def _agent_loop_with_stop(stop: asyncio.Event, config_path: str, interval_
 
 
 async def _run(config_path: str, once: bool, no_agent: bool) -> None:
+    log = logging.getLogger("secops_buddy.run")
     if not no_agent:
         try:
             await asyncio.to_thread(run_agent, config_path)
         except Exception as e:
-            logging.error("agent_error %s", e)
+            log.error("agent_error %s", e)
 
     if once:
         return
 
-    root = _find_root()
-    config = _load_config(Path(config_path).expanduser().resolve())
+    cfg_path = Path(config_path).expanduser().resolve()
+    root = find_root(cfg_path)
+    config = load_config(cfg_path)
     interval_s = 10
     try:
         interval_s = int(config.get("monitor_interval_seconds") or 10)
@@ -97,7 +142,7 @@ async def _run(config_path: str, once: bool, no_agent: bool) -> None:
         tasks.append(asyncio.create_task(_agent_loop_with_stop(stop, config_path, interval_s)))
     tasks.append(asyncio.create_task(run_bot(config_path)))
 
-    logging.info("run_start root=%s config=%s monitor_interval_s=%d", root, config_path, interval_s)
+    log.info("run_start root=%s config=%s monitor_interval_s=%d", root, config_path, interval_s)
     try:
         await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
     except KeyboardInterrupt:
@@ -110,13 +155,59 @@ async def _run(config_path: str, once: bool, no_agent: bool) -> None:
 
 
 parser = argparse.ArgumentParser(prog="run")
-parser.add_argument("--config", default=str(_find_root() / "config" / "config.yml"))
+parser.add_argument("--config", default=str(find_root() / "config" / "config.yml"))
 parser.add_argument("--once", action="store_true")
 parser.add_argument("--no-agent", action="store_true")
+parser.add_argument("--foreground", action="store_true")
 args = parser.parse_args()
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-root = _find_root()
-load_dotenv(root / ".env", override=False)
+cfg_path = Path(args.config).expanduser().resolve()
+root = find_root(cfg_path)
+init_env(cfg_path)
 
-raise SystemExit(asyncio.run(_run(args.config, args.once, args.no_agent)))
+pid_path, run_log, bot_log, agent_log = _pid_paths(root)
+
+token = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
+bot_username = _tg_get_username(token)
+
+is_child = os.getenv("SECOPS_BUDDY_DAEMON", "").strip() == "1"
+can_daemon = os.name == "posix" and not args.foreground and not is_child and not args.once
+
+if can_daemon:
+    env = dict(os.environ)
+    env["SECOPS_BUDDY_DAEMON"] = "1"
+    env["SECOPS_BUDDY_ROOT"] = str(root)
+
+    out = open(run_log, "a", encoding="utf-8")
+    try:
+        p = subprocess.Popen(
+            [sys.executable, str(Path(__file__).resolve()), "--config", str(cfg_path), "--foreground", *([] if not args.no_agent else ["--no-agent"])],
+            cwd=str(root),
+            env=env,
+            stdout=out,
+            stderr=out,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    finally:
+        out.close()
+
+    pid_path.write_text(str(p.pid), encoding="utf-8")
+
+    print("secops-buddy started")
+    if bot_username:
+        print(f"bot: @{bot_username}")
+    else:
+        print("bot: unavailable")
+    print(f"pid: {p.pid}")
+    print("logs:")
+    print(f"  tail -f {run_log}")
+    print(f"  tail -f {bot_log}")
+    print(f"  tail -f {agent_log}")
+    print("stop:")
+    print(f"  kill $(cat {pid_path})")
+    raise SystemExit(0)
+
+_configure_logging(root, bot_log, agent_log, run_log)
+
+raise SystemExit(asyncio.run(_run(str(cfg_path), args.once, args.no_agent)))

@@ -24,6 +24,13 @@ from secops_buddy.utils import (
 
 
 
+def _agent_logger(path: Path) -> logging.Logger:
+    logger = logging.getLogger("secops_buddy.agent")
+    logger.setLevel(logging.INFO)
+    logger.propagate = True
+    return logger
+
+
 
 def _ensure_dirs(state_dir: Path) -> tuple[Path, Path]:
     snapshots_dir = state_dir / "snapshots"
@@ -113,6 +120,7 @@ def _notify(config: dict, state_dir: Path, cur: dict) -> None:
 
 
 def run(config_path: str) -> int:
+    log = logging.getLogger("secops_buddy.agent")
     cfg_path = Path(config_path).expanduser().resolve()
     config = load_config(cfg_path)
     init_env(cfg_path)
@@ -131,11 +139,19 @@ def run(config_path: str) -> int:
         log_file = (root / log_file).resolve()
 
     log_file.parent.mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-        handlers=[logging.FileHandler(log_file, encoding="utf-8")],
-    )
+    env_agent_log = (os.getenv("SECOPS_BUDDY_AGENT_LOG") or "").strip()
+    if env_agent_log:
+        try:
+            log_file = Path(env_agent_log).expanduser().resolve()
+            log_file.parent.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+
+    for h in list(log.handlers):
+        log.removeHandler(h)
+    fh = logging.FileHandler(log_file, encoding="utf-8")
+    fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    log.addHandler(fh)
 
     snapshots_dir, diffs_dir = _ensure_dirs(state_dir)
     latest_snapshot = snapshots_dir / "latest.json"
@@ -158,8 +174,8 @@ def run(config_path: str) -> int:
         write_json(diff_ts_path, diff)
     write_json(latest_diff, diff)
 
-    logging.info("snapshot_saved ts=%s", ts)
-    logging.info("diff status=%s details=%s", diff.get("status"), diff.get("details"))
+    log.info("snapshot_saved ts=%s", ts)
+    log.info("diff status=%s details=%s", diff.get("status"), diff.get("details"))
     return 0
 
 

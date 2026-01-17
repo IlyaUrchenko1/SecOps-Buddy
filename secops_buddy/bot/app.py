@@ -387,6 +387,7 @@ def _format_status(
 
 
 async def run_bot(config_path: str) -> None:
+    log = logging.getLogger("secops_buddy.bot")
     cfg_path = Path(config_path).expanduser().resolve()
     root = find_root(cfg_path)
     init_env(cfg_path)
@@ -400,8 +401,7 @@ async def run_bot(config_path: str) -> None:
     if not allowed:
         raise RuntimeError("allowed_users_missing")
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    logging.info("bot_start root=%s config=%s allowed_users=%d", root, cfg_path, len(allowed))
+    log.info("bot_start root=%s config=%s allowed_users=%d", root, cfg_path, len(allowed))
 
     state_dir = _get_state_dir(root, config)
     started_at = time.time()
