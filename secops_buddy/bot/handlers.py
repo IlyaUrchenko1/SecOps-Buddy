@@ -33,6 +33,7 @@ def _help_text() -> str:
             "<b>Команды</b>",
             "",
             "<b>/status</b> — статус бота и сервера",
+            "<b>/endpoints</b> — как подключиться к серверу (IP/порты/протоколы)",
             "<b>/diff</b> — изменения относительно прошлого snapshot",
             "<b>/report</b> — server snapshot + diff",
         ]
@@ -51,7 +52,7 @@ def _start_text() -> str:
     )
 
 
-def build_router(ctx: BotContext, read_status_text, read_diff_text, read_report_text) -> Router:
+def build_router(ctx: BotContext, read_status_text, read_endpoints_text, read_diff_text, read_report_text) -> Router:
     router = Router()
 
     @router.message(Command("start"))
@@ -74,6 +75,13 @@ def build_router(ctx: BotContext, read_status_text, read_diff_text, read_report_
             await message.answer(_access_denied_text())
             return
         await message.answer(read_status_text(), reply_markup=main_menu_kb())
+
+    @router.message(Command("endpoints"))
+    async def cmd_endpoints(message: Message) -> None:
+        if not _is_allowed(message, ctx.allowed_users):
+            await message.answer(_access_denied_text())
+            return
+        await message.answer(read_endpoints_text(), reply_markup=main_menu_kb())
 
     @router.message(Command("diff"))
     async def cmd_diff(message: Message) -> None:

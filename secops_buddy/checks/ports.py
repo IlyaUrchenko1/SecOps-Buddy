@@ -14,7 +14,7 @@ class PortEntry:
     raw: str
 
 
-_SS_RE = re.compile(r"^(?P<proto>\S+)\s+(?P<local>\S+)\s+(?P<peer>\S+)\s+(?P<process>.*)$")
+_SS_RE = re.compile(r"^\S+")
 
 
 def _split_host_port(local: str) -> tuple[str, int] | None:
@@ -42,19 +42,28 @@ def _split_host_port(local: str) -> tuple[str, int] | None:
 def _parse_ss_lines(lines: list[str]) -> list[PortEntry]:
     out: list[PortEntry] = []
     for line in lines:
-        m = _SS_RE.match(line.strip())
+        s = line.strip()
+        if not s:
+            continue
+        m = _SS_RE.match(s)
         if not m:
             continue
-        local = m.group("local")
+        parts = s.split()
+        if len(parts) < 2:
+            continue
+        proto = parts[0].strip()
+        if len(parts) >= 2 and parts[1].strip().upper() in {"LISTEN", "UNCONN"}:
+            local = parts[-2] if len(parts) >= 2 else ""
+        else:
+            local = parts[-2] if len(parts) >= 2 else ""
         hp = _split_host_port(local)
         if not hp:
             continue
         ip, port = hp
-        process_raw = m.group("process").strip()
-        process = process_raw if process_raw else None
+        process = None
         out.append(
             PortEntry(
-                proto=m.group("proto"),
+                proto=proto,
                 ip=ip,
                 port=port,
                 process=process,
@@ -67,7 +76,7 @@ def _parse_ss_lines(lines: list[str]) -> list[PortEntry]:
 
 def check_ports() -> dict:
     p = subprocess.run(
-        ["ss", "-tulpnH"],
+        ["ss", "-H", "-lntu"],
         check=False,
         capture_output=True,
         text=True,
@@ -84,6 +93,15 @@ def check_ports() -> dict:
         "data": {
             "returncode": p.returncode,
             "stderr": stderr,
-            "entries": [e.__dict__ for e in entries],
+            "entries": [
+                {
+                    "proto": e.proto,
+                    "ip": e.ip,
+                    "port": e.port,
+                    "process": e.process,
+                    "raw": e.raw,
+                }
+                for e in entries
+            ],
         },
     }

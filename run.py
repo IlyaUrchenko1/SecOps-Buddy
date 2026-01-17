@@ -49,6 +49,7 @@ def _load_config(path: Path) -> dict:
 async def _agent_loop_with_stop(stop: asyncio.Event, config_path: str, interval_s: int) -> None:
     while not stop.is_set():
         try:
+            os.environ["SECOPS_BUDDY_ARCHIVE"] = "0"
             await asyncio.to_thread(run_agent, config_path)
         except Exception as e:
             logging.error("agent_error %s", e)
@@ -70,12 +71,12 @@ async def _run(config_path: str, once: bool, no_agent: bool) -> None:
 
     root = _find_root()
     config = _load_config(Path(config_path).expanduser().resolve())
-    interval_h = 24
+    interval_s = 10
     try:
-        interval_h = int(config.get("scan_interval_hours") or 24)
+        interval_s = int(config.get("monitor_interval_seconds") or 10)
     except Exception:
-        interval_h = 24
-    interval_s = max(60, interval_h * 3600)
+        interval_s = 10
+    interval_s = max(2, interval_s)
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -96,7 +97,7 @@ async def _run(config_path: str, once: bool, no_agent: bool) -> None:
         tasks.append(asyncio.create_task(_agent_loop_with_stop(stop, config_path, interval_s)))
     tasks.append(asyncio.create_task(run_bot(config_path)))
 
-    logging.info("run_start root=%s config=%s interval_s=%d", root, config_path, interval_s)
+    logging.info("run_start root=%s config=%s monitor_interval_s=%d", root, config_path, interval_s)
     try:
         await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
     except KeyboardInterrupt:

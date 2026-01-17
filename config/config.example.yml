@@ -1,6 +1,8 @@
 scan_interval_hours: 24
+monitor_interval_seconds: 10
 
 notifications:
+  enabled: true
   send_critical: true
   send_warning: true
   send_daily_digest: true

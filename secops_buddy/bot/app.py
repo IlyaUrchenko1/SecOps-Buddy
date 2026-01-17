@@ -277,6 +277,133 @@ def _format_last_login(line: str) -> str:
     return f"<code>{_escape(user)} | {_escape(ip)} | {_escape(rest)} | {_escape(status)}</code>"
 
 
+def _local_ips() -> list[str]:
+    ips: set[str] = set()
+    try:
+        p = subprocess.run(["hostname", "-I"], check=False, capture_output=True, text=True)
+        for part in (p.stdout or "").split():
+            s = part.strip()
+            if s:
+                ips.add(s)
+    except Exception:
+        pass
+
+    if not ips:
+        try:
+            p = subprocess.run(["ip", "-o", "addr", "show"], check=False, capture_output=True, text=True)
+            for line in (p.stdout or "").splitlines():
+                parts = line.split()
+                if "inet" in parts:
+                    i = parts.index("inet")
+                    if i + 1 < len(parts):
+                        addr = parts[i + 1].split("/", 1)[0].strip()
+                        if addr:
+                            ips.add(addr)
+                if "inet6" in parts:
+                    i = parts.index("inet6")
+                    if i + 1 < len(parts):
+                        addr = parts[i + 1].split("/", 1)[0].strip()
+                        if addr:
+                            ips.add(addr)
+        except Exception:
+            pass
+
+    def key(x: str) -> tuple[int, str]:
+        return (0, x) if "." in x else (1, x)
+
+    out = sorted(ips, key=key)
+    return out
+
+
+def _proto_hint(proto: str, port: int) -> str:
+    p = proto.lower()
+    if p.startswith("tcp"):
+        if port == 22:
+            return "ssh/sftp"
+        if port in (80, 8080, 8000, 3000, 5000):
+            return "http"
+        if port in (443, 8443):
+            return "https"
+        return "tcp"
+    if p.startswith("udp"):
+        if port == 53:
+            return "dns (udp)"
+        if port == 123:
+            return "ntp (udp)"
+        return "udp"
+    return p or "unknown"
+
+
+def _format_endpoints(*, state_dir: Path) -> str:
+    snap_path = state_dir / "snapshots" / "latest.json"
+    snapshot = _read_json(snap_path)
+    if not snapshot:
+        return "<b>Как подключиться</b>\n\nНет snapshot. Сначала запусти agent."
+
+    ports = snapshot.get("ports") if isinstance(snapshot.get("ports"), dict) else {}
+    data = ports.get("data") if isinstance(ports.get("data"), dict) else {}
+    entries = data.get("entries") if isinstance(data.get("entries"), list) else []
+
+    ssh_port = 22
+    ssh = snapshot.get("ssh") if isinstance(snapshot.get("ssh"), dict) else {}
+    ssh_data = ssh.get("data") if isinstance(ssh.get("data"), dict) else {}
+    ssh_cfg = ssh_data.get("config") if isinstance(ssh_data.get("config"), dict) else {}
+    raw_port = ssh_cfg.get("Port")
+    if isinstance(raw_port, str):
+        try:
+            ssh_port = int(raw_port.strip())
+        except Exception:
+            ssh_port = 22
+    elif isinstance(raw_port, list) and raw_port:
+        try:
+            ssh_port = int(str(raw_port[0]).strip())
+        except Exception:
+            ssh_port = 22
+
+    ips = _local_ips()
+    if not ips:
+        ips = ["127.0.0.1"]
+
+    out: set[tuple[str, str]] = set()
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        try:
+            port = int(e.get("port") or 0)
+        except Exception:
+            port = 0
+        if port <= 0:
+            continue
+        proto = str(e.get("proto") or "").strip().lower()
+        ip = str(e.get("ip") or "").strip()
+        hint = _proto_hint(proto, port)
+
+        is_wild = ip in ("*", "0.0.0.0", "::", "")
+        targets = ips if is_wild else [ip]
+
+        for host in targets:
+            addr = f"{host}:{port}"
+            out.add((addr, hint))
+
+    for host in ips:
+        out.add((f"{host}:{ssh_port}", "ssh/sftp"))
+
+    lines: list[str] = []
+    lines.append("<b>Как подключиться к серверу</b>")
+    lines.append("")
+    lines.append("Список составлен по последнему snapshot (слушающие порты).")
+    lines.append("Если сервер за NAT — используй внешний IP/домен и проброшенные порты.")
+    lines.append("")
+    lines.append("<b>Адрес | протокол</b>")
+    lines.append("")
+    if not out:
+        lines.append("<code>Нет открытых слушающих портов в snapshot</code>")
+        return "\n".join(lines)
+
+    for addr, hint in sorted(out, key=lambda x: (x[1], x[0])):
+        lines.append(f"<code>{_escape(addr)} | {_escape(hint)}</code>")
+    return "\n".join(lines)
+
 def _format_status(
     *,
     root: Path,
@@ -361,6 +488,9 @@ async def run_bot(config_path: str) -> None:
     def read_status_text() -> str:
         return _format_status(root=root, config_path=cfg_path, state_dir=state_dir, started_at=started_at)
 
+    def read_endpoints_text() -> str:
+        return _format_endpoints(state_dir=state_dir)
+
     def read_diff_text() -> str:
         return _format_diff(_read_json(state_dir / "diffs" / "latest.json"))
 
@@ -377,7 +507,7 @@ async def run_bot(config_path: str) -> None:
     )
     dp = Dispatcher()
     ctx = BotContext(allowed_users=allowed, state_dir=state_dir, root=root, config_path=cfg_path)
-    dp.include_router(build_router(ctx, read_status_text, read_diff_text, read_report_text))
+    dp.include_router(build_router(ctx, read_status_text, read_endpoints_text, read_diff_text, read_report_text))
     await dp.start_polling(bot, allowed_updates=["message"])
 
 
