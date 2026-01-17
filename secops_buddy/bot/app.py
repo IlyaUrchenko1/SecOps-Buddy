@@ -39,7 +39,13 @@ def _get_state_dir(root: Path, config: dict) -> Path:
 
 def _format_snapshot(snapshot: dict | None) -> str:
     if not snapshot:
-        return "<b>Нет данных</b>\n\nСначала запусти agent, чтобы он создал snapshot."
+        return "\n".join(
+            [
+                "<b>🧾 Данных пока нет</b>",
+                "",
+                "Сначала запусти agent, чтобы он создал snapshot.",
+            ]
+        )
     meta = snapshot.get("meta") if isinstance(snapshot.get("meta"), dict) else {}
     ts = str(meta.get("ts") or "").strip()
     parts: list[str] = []
@@ -51,18 +57,31 @@ def _format_snapshot(snapshot: dict | None) -> str:
             continue
         st = _escape(str(item.get("status") or ""))
         det = _escape(str(item.get("details") or ""))
-        parts.append(f"<b>{_escape(name)}</b>: <code>{st}</code> {_escape(det)}")
-    return "\n".join(parts) if parts else "<b>Нет данных</b>"
+        line = f"<b>{_escape(name)}</b>: <code>{st}</code>"
+        if det:
+            line = f"{line} {det}"
+        parts.append(line)
+    return "\n".join(parts) if parts else "<b>🧾 Данных пока нет</b>"
 
 
 def _format_diff(diff: dict | None) -> str:
     if not diff:
-        return "<b>Нет diff</b>\n\nЗапусти agent два раза, чтобы появился diff."
+        return "\n".join(
+            [
+                "<b>🔀 Изменений пока нет</b>",
+                "",
+                "Запусти agent два раза, чтобы появился diff.",
+            ]
+        )
     st = _escape(str(diff.get("status") or ""))
     det = _escape(str(diff.get("details") or ""))
     data = diff.get("data") if isinstance(diff.get("data"), dict) else {}
     changed = data.get("changed") if isinstance(data.get("changed"), dict) else {}
-    parts = [f"<b>Diff</b>: <code>{st}</code> {_escape(det)}"]
+    head = f"<b>🔀 Изменения</b>"
+    sub = f"<code>{st}</code>"
+    if det:
+        sub = f"{sub} {det}"
+    parts = [head, "", sub]
     if not changed:
         return "\n".join(parts)
     for k in sorted(changed.keys()):
@@ -71,7 +90,15 @@ def _format_diff(diff: dict | None) -> str:
 
 
 def _format_report(snapshot: dict | None, diff: dict | None) -> str:
-    return f"{_format_snapshot(snapshot)}\n\n{_format_diff(diff)}"
+    return "\n".join(
+        [
+            "<b>🧾 Отчёт</b>",
+            "",
+            _format_snapshot(snapshot),
+            "",
+            _format_diff(diff),
+        ]
+    )
 
 
 def _fmt_bytes(n: int) -> str:
@@ -259,7 +286,13 @@ def _format_endpoints(*, state_dir: Path) -> str:
     snap_path = state_dir / "snapshots" / "latest.json"
     snapshot = read_json(snap_path)
     if not snapshot:
-        return "<b>Как подключиться</b>\n\nНет snapshot. Сначала запусти agent."
+        return "\n".join(
+            [
+                "<b>🔌 Подключение</b>",
+                "",
+                "Нет snapshot. Сначала запусти agent.",
+            ]
+        )
 
     ports = snapshot.get("ports") if isinstance(snapshot.get("ports"), dict) else {}
     data = ports.get("data") if isinstance(ports.get("data"), dict) else {}
@@ -310,7 +343,7 @@ def _format_endpoints(*, state_dir: Path) -> str:
         out.add((f"{host}:{ssh_port}", "ssh/sftp"))
 
     lines: list[str] = []
-    lines.append("<b>Как подключиться к серверу</b>")
+    lines.append("<b>🔌 Подключение</b>")
     lines.append("")
     lines.append("Список составлен по последнему snapshot (слушающие порты).")
     lines.append("Если сервер за NAT — используй внешний IP/домен и проброшенные порты.")
@@ -342,7 +375,7 @@ def _format_status(
     up_s = max(0.0, time.time() - started_at)
 
     lines: list[str] = []
-    lines.append("<b>Статус</b>")
+    lines.append("<b>📊 Статус</b>")
     lines.append("")
     lines.append(f"<b>Бот</b>: работает <code>{_escape(_fmt_duration_s(up_s))}</code>")
     if mem_avail is not None and mem_total is not None:
