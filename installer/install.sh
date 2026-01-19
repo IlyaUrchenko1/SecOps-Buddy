@@ -8,6 +8,27 @@ echo "[*] Installing ${APP_NAME}..."
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${PROJECT_DIR}"
 
+PRIVACY_POLICY_FILE="${PROJECT_DIR}/PRIVACY_POLICY.md"
+
+if [[ -f "${PRIVACY_POLICY_FILE}" ]]; then
+  echo ""
+  echo "=========================================="
+  echo "Политика конфиденциальности"
+  echo "=========================================="
+  echo ""
+  echo "Перед установкой ${APP_NAME} необходимо ознакомиться с политикой конфиденциальности."
+  echo "Файл политики: ${PRIVACY_POLICY_FILE}"
+  echo ""
+  read -p "Вы согласны с политикой конфиденциальности? (y/n): " -n 1 -r
+  echo ""
+  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "[!] Установка прервана. Вы должны согласиться с политикой конфиденциальности для продолжения."
+    exit 1
+  fi
+  echo "[+] Согласие получено. Продолжаем установку..."
+  echo ""
+fi
+
 if command -v apt-get >/dev/null 2>&1; then
   if [[ ${EUID:-99999} -eq 0 ]]; then
     apt-get update -y
