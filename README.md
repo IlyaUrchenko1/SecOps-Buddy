@@ -45,7 +45,7 @@ bash installer/install.sh
 
 #### `.env`
 
-- `TELEGRAM_BOT_TOKEN` — токен бота
+- `TELEGRAM_BOT_TOKEN` — токен бота, создается в боте @BotFather
 - `TELEGRAM_ALLOWED_USERS` — список Telegram user_id через запятую (например: `123,456`)
 
 #### `config/config.yml`
@@ -63,13 +63,9 @@ bash installer/install.sh
 sudo .venv/bin/python run.py
 ```
 
+без root запуска не все данные могут корректн ополучаться
+
 `run.py` по умолчанию (на Linux) запускает SecOps Buddy в фоне, печатает PID, `@bot_username` (если токен валидный), и команды для логов/остановки.
-
-Если нужен запуск без root (может быть меньше данных):
-
-```bash
-.venv/bin/python run.py
-```
 
 ### 5) Остановка
 
@@ -107,19 +103,6 @@ tail -f var/secops-buddy/run.log
 tail -f var/secops-buddy/bot.log
 tail -f var/secops-buddy/agent.log
 ```
-
-## Типовые проблемы
-
-### Уведомления не приходят
-
-- Проверь `.env`: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS`
-- Проверь `config/config.yml`: `notifications.enabled: true`
-- Проверь логи: `tail -f var/secops-buddy/bot.log` и `tail -f var/secops-buddy/agent.log`
-
-### `/endpoints` пустой
-
-- Нужен snapshot (сначала дождись первого прогона агента)
-- Проверь, что включён `checks.ports` или `notifications.enabled` (агент собирает порты)
 
 ## Roadmap
 
